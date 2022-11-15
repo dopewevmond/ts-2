@@ -19,6 +19,7 @@ class App {
 
   private setupApplication (): void {
     this.app.use(bodyParser.urlencoded({ extended: true }))
+    this.app.use(bodyParser.json()) // get json data from request into req.body
     this.app.use('/public', express.static(path.join(__dirname, '/../public'))) // serve static assets only on public route
     this.app.set('views', path.join(__dirname, '/../views')) // where to locate templates
     this.app.set('view engine', 'pug') // using pug view engine for templates
