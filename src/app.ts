@@ -2,6 +2,9 @@ import * as express from 'express'
 import Controller from './controllers/controller.interface'
 import * as bodyParser from 'body-parser'
 import * as path from 'path'
+import * as dotenv from 'dotenv'
+
+dotenv.config()
 
 class App {
   public app: express.Application
@@ -22,7 +25,12 @@ class App {
   }
 
   public listen (): void {
-    const port: number = 3000
+    let port: number
+    if (typeof process.env.PORT === 'string') {
+      port = parseInt(process.env.PORT)
+    } else {
+      port = 3000
+    }
     this.app.listen(port, () => {
       console.log(`Listening on port: ${port}`)
     })
