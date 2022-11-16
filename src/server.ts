@@ -1,10 +1,10 @@
 import App from './app'
 import MainController from './controllers/controller.main'
-import LoginController from './controllers/controller.login'
+import AuthController from './controllers/controller.auth'
 
 const app = new App([
   new MainController(),
-  new LoginController()
+  new AuthController()
 ])
 
 app.listen()

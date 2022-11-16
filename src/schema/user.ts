@@ -1,6 +1,6 @@
 interface User {
-  username: string
-  password: string
+  email: string
+  password_hash: string
   role: string
 }
 
