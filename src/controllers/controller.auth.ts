@@ -19,6 +19,8 @@ class AuthController implements Controller {
   public router = Router()
 
   constructor () {
+    this.resetPasswordHandlerGet = this.resetPasswordHandlerGet.bind(this)
+
     this.setupRoutes()
   }
 
@@ -27,10 +29,12 @@ class AuthController implements Controller {
     this.router.post(`${this.path}/login`, this.LoginHandler)
     // eslint-disable-next-line @typescript-eslint/no-misused-promises
     this.router.post(`${this.path}/register`, this.RegisterHandler)
+    this.router.get(`${this.path}/reset_password`, this.resetPasswordHandlerGet)
+    this.router.post(`${this.path}/reset_password`, this.ResetPasswordHandlerPost)
   }
 
   private async LoginHandler (req: Request, res: Response): Promise<void> {
-    let errorMessage = 'username or password incorrect'
+    let errorMessage = 'email or password incorrect'
 
     const email: string = req.body.email
     const password: string = req.body.password
@@ -44,7 +48,7 @@ class AuthController implements Controller {
     if (typeof user !== 'undefined') {
       const passwordHash = await bcrypt.compare(password, user.password_hash)
       if (passwordHash) {
-        const accessToken = jwt.sign({ username: user.email, role: user.role }, SECRET)
+        const accessToken = jwt.sign({ email: user.email, role: user.role }, SECRET)
         res.json({ token: accessToken })
       } else {
         res.status(401).send({ message: errorMessage })
@@ -78,6 +82,53 @@ class AuthController implements Controller {
       res.status(201).json({ message: 'user created successfully' })
     } else {
       res.status(400).json({ message: errorMessage })
+    }
+  }
+
+  private ResetPasswordHandlerPost (req: Request, res: Response): void {
+    const token: string | undefined = req.body.resetToken
+    const newPassword: string | undefined = req.body.newPassword
+
+    if (typeof token === 'string' && typeof newPassword === 'string') {
+      // eslint-disable-next-line @typescript-eslint/no-misused-promises
+      jwt.verify(token, SECRET, async (err, user: jwt.JwtPayload) => {
+        if (err instanceof Error) {
+          return res.sendStatus(401)
+        }
+
+        const userToChangePassword: User | undefined = users.find(u => u.email === user.email)
+
+        if (typeof userToChangePassword !== 'undefined') {
+          const salt = await bcrypt.genSalt(10)
+          userToChangePassword.password_hash = await bcrypt.hash(newPassword, salt)
+          res.status(200).json({ message: 'password changed successfully' })
+        } else {
+          res.status(404).json({ message: 'user does not exist' })
+        }
+      })
+    } else {
+      res.status(400).json({ message: 'Bad request' })
+    }
+  }
+
+  private resetPasswordHandlerGet (req: Request, res: Response): void {
+    const email: string | undefined = req.body.email
+    const user: User | undefined = users.find(u => u.email === email)
+
+    if (typeof email !== 'undefined' && typeof user !== 'undefined') {
+      res.json({ passwordResetToken: this.getPasswordResetToken(email) })
+    } else {
+      res.json({ message: 'a link containing reset instructions has been sent to your email' })
+    }
+  }
+
+  private getPasswordResetToken (email: string): string | undefined {
+    const user: User | undefined = users.find(u => u.email === email)
+
+    if (typeof user !== 'undefined') {
+      return jwt.sign({ email: user.email }, SECRET, { expiresIn: '10m' })
+    } else {
+      return undefined
     }
   }
 }
