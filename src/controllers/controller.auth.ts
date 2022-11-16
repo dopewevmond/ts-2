@@ -2,7 +2,9 @@ import Controller from './controller.interface'
 import { Router, Request, Response } from 'express'
 import * as jwt from 'jsonwebtoken'
 import User from '../schema/user'
+import TokenDetail from '../schema/tokenDetail'
 import * as bcrypt from 'bcrypt'
+import makeid from '../utils/utils.generateid'
 
 // secret to be used to sign the jwt
 let SECRET: jwt.Secret
@@ -13,6 +15,7 @@ if (typeof process.env.SECRET === 'string') {
 }
 
 const users: User[] = []
+let validPasswordResetTokens: TokenDetail[] = []
 
 class AuthController implements Controller {
   public path = '/auth'
@@ -48,7 +51,7 @@ class AuthController implements Controller {
     if (typeof user !== 'undefined') {
       const passwordHash = await bcrypt.compare(password, user.password_hash)
       if (passwordHash) {
-        const accessToken = jwt.sign({ email: user.email, role: user.role }, SECRET)
+        const accessToken = jwt.sign({ email: user.email, role: user.role }, SECRET, { expiresIn: 90 })
         res.json({ token: accessToken })
       } else {
         res.status(401).send({ message: errorMessage })
@@ -96,11 +99,22 @@ class AuthController implements Controller {
           return res.sendStatus(401)
         }
 
+        // checking if its token id exists in the validResetTokens array
+        // if it doesn't exist, it means a more recent password reset token has
+        // been generated (or it has already been used), which makes it invalid
+        const findTokenFromValidTokens: TokenDetail | undefined = validPasswordResetTokens.find(tokenObj => tokenObj.token_id === user.token_id)
+        if (typeof findTokenFromValidTokens === 'undefined') {
+          return res.sendStatus(401)
+        }
+
         const userToChangePassword: User | undefined = users.find(u => u.email === user.email)
 
         if (typeof userToChangePassword !== 'undefined') {
           const salt = await bcrypt.genSalt(10)
           userToChangePassword.password_hash = await bcrypt.hash(newPassword, salt)
+
+          // after successfully resetting password we want to delete the token id from the validResetTokens
+          validPasswordResetTokens = validPasswordResetTokens.filter(tokenObj => tokenObj.email !== userToChangePassword.email)
           res.status(200).json({ message: 'password changed successfully' })
         } else {
           res.status(404).json({ message: 'user does not exist' })
@@ -126,7 +140,20 @@ class AuthController implements Controller {
     const user: User | undefined = users.find(u => u.email === email)
 
     if (typeof user !== 'undefined') {
-      return jwt.sign({ email: user.email }, SECRET, { expiresIn: '10m' })
+      // to invalidate any previously generated password reset tokens we keep track of the most...
+      // ...recent token by generating a random token_id
+      const tokenId = makeid(7)
+      const previousTokenObj = validPasswordResetTokens.find(tokenObj => tokenObj.email === user.email)
+      if (typeof previousTokenObj !== 'undefined') {
+        // a reset token has previously been generated for that email so the...
+        // ...token id is updated to this current token being created, thereby invalidating...
+        // ...previously generated tokens
+        previousTokenObj.token_id = tokenId
+      } else {
+        const currentTokenObj: TokenDetail = { token_id: tokenId, email: user.email }
+        validPasswordResetTokens.push(currentTokenObj)
+      }
+      return jwt.sign({ email: user.email, token_id: tokenId }, SECRET, { expiresIn: '10m' })
     } else {
       return undefined
     }
