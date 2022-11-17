@@ -1,11 +1,12 @@
 import Controller from './controller.interface'
-import { Router, Request, Response } from 'express'
+import { Router, Request, Response, NextFunction, RequestHandler } from 'express'
 import * as jwt from 'jsonwebtoken'
 import User from '../schema/user'
 import TokenDetail from '../schema/tokenDetail'
 import * as bcrypt from 'bcrypt'
 import makeid from '../utils/utils.generateid'
 import { signAccessToken, signRefreshToken, signPasswordResetToken } from '../utils/utils.signtoken'
+import authenticateJWT from '../middleware/middleware.authenticatejwt'
 
 // secret to be used to sign the jwt
 let SECRET: jwt.Secret
@@ -25,6 +26,7 @@ if (typeof process.env.REFRESH_TOKEN_SECRET === 'string') {
 const users: User[] = []
 let validPasswordResetTokens: TokenDetail[] = []
 let validRefreshTokens: TokenDetail[] = []
+const loggedOutAccessTokens: TokenDetail[] = []
 
 class AuthController implements Controller {
   public path = '/auth'
@@ -32,7 +34,6 @@ class AuthController implements Controller {
 
   constructor () {
     this.ResetPasswordHandlerGet = this.ResetPasswordHandlerGet.bind(this)
-
     this.setupRoutes()
   }
 
@@ -44,6 +45,7 @@ class AuthController implements Controller {
     this.router.get(`${this.path}/reset_password`, this.ResetPasswordHandlerGet)
     this.router.post(`${this.path}/reset_password`, this.ResetPasswordHandlerPost)
     this.router.post(`${this.path}/refresh-token`, this.RefreshTokenHandler)
+    this.router.post(`${this.path}/logout`, authenticateJWT, this.LogoutHandler)
   }
 
   private async LoginHandler (req: Request, res: Response): Promise<void> {
@@ -65,7 +67,7 @@ class AuthController implements Controller {
         const tokenId = makeid(7)
         validRefreshTokens.push({ token_id: tokenId, email: user.email })
 
-        const accessToken = signAccessToken(user.email, user.role)
+        const accessToken = signAccessToken(user.email, user.role, tokenId)
         const refreshToken = signRefreshToken(user.email, user.role, tokenId)
         res.json({ accessToken, refreshToken })
       } else {
@@ -194,7 +196,7 @@ class AuthController implements Controller {
           }
 
           const newTokenId = makeid(7)
-          const accessToken = signAccessToken(u.email, u.role)
+          const accessToken = signAccessToken(u.email, u.role, newTokenId)
           const refreshToken = signRefreshToken(u.email, u.role, newTokenId)
 
           // after signing a new refresh token let's invalidate the previous one by removing...
@@ -208,6 +210,31 @@ class AuthController implements Controller {
       res.sendStatus(401)
     }
   }
+
+  private LogoutHandler (req: Request, res: Response): void {
+    const userEmail: string = res.locals.user.email
+    const tokenId: string = res.locals.user.token_id
+    loggedOutAccessTokens.push({ email: userEmail, token_id: tokenId })
+
+    res.json({ message: 'logged out successfully' })
+  }
 }
 
-export default AuthController
+function getCheckBlacklistMiddleware (): RequestHandler {
+  // passing in blacklistedAccessTokens by reference so that checkBlacklist (which will be exported from this file)...
+  // ...can access it by virtue of a closure
+  const blacklistedAccessTokens = loggedOutAccessTokens
+  function checkBlacklist (req: Request, res: Response, next: NextFunction): void {
+    const user = res.locals.user
+    const findUserInBlacklist = blacklistedAccessTokens.find(tokenObj => tokenObj.token_id === user.token_id)
+
+    if (typeof findUserInBlacklist !== 'undefined') {
+      res.sendStatus(401)
+    } else {
+      next()
+    }
+  }
+  return checkBlacklist
+}
+
+export { AuthController, getCheckBlacklistMiddleware }

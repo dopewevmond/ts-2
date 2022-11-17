@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import Controller from './controller.interface'
 import authenticateJWT from '../middleware/middleware.authenticatejwt'
+import checkBlacklist from '../middleware/middleware.checkblacklist'
 
 const books = [
   {
@@ -41,6 +42,7 @@ class MainController implements Controller {
     this.router.get(
       this.path,
       authenticateJWT,
+      checkBlacklist,
       this.Homehandler
     )
   }
