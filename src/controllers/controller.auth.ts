@@ -5,6 +5,7 @@ import User from '../schema/user'
 import TokenDetail from '../schema/tokenDetail'
 import * as bcrypt from 'bcrypt'
 import makeid from '../utils/utils.generateid'
+import { signAccessToken, signRefreshToken, signPasswordResetToken } from '../utils/utils.signtoken'
 
 // secret to be used to sign the jwt
 let SECRET: jwt.Secret
@@ -12,6 +13,13 @@ if (typeof process.env.SECRET === 'string') {
   SECRET = process.env.SECRET
 } else {
   SECRET = 'N0T@reallyG00ds3cr3t'
+}
+
+let REFRESH_SECRET: jwt.Secret
+if (typeof process.env.REFRESH_TOKEN_SECRET === 'string') {
+  REFRESH_SECRET = process.env.REFRESH_TOKEN_SECRET
+} else {
+  REFRESH_SECRET = 'N0T@reallyG00dR3fr3shs3cr3t'
 }
 
 const users: User[] = []
@@ -22,7 +30,7 @@ class AuthController implements Controller {
   public router = Router()
 
   constructor () {
-    this.resetPasswordHandlerGet = this.resetPasswordHandlerGet.bind(this)
+    this.ResetPasswordHandlerGet = this.ResetPasswordHandlerGet.bind(this)
 
     this.setupRoutes()
   }
@@ -32,8 +40,9 @@ class AuthController implements Controller {
     this.router.post(`${this.path}/login`, this.LoginHandler)
     // eslint-disable-next-line @typescript-eslint/no-misused-promises
     this.router.post(`${this.path}/register`, this.RegisterHandler)
-    this.router.get(`${this.path}/reset_password`, this.resetPasswordHandlerGet)
+    this.router.get(`${this.path}/reset_password`, this.ResetPasswordHandlerGet)
     this.router.post(`${this.path}/reset_password`, this.ResetPasswordHandlerPost)
+    this.router.post(`${this.path}/refresh-token`, this.RefreshTokenHandler)
   }
 
   private async LoginHandler (req: Request, res: Response): Promise<void> {
@@ -51,8 +60,9 @@ class AuthController implements Controller {
     if (typeof user !== 'undefined') {
       const passwordHash = await bcrypt.compare(password, user.password_hash)
       if (passwordHash) {
-        const accessToken = jwt.sign({ email: user.email, role: user.role }, SECRET, { expiresIn: 90 })
-        res.json({ token: accessToken })
+        const accessToken = signAccessToken(user.email, user.role)
+        const refreshToken = signRefreshToken(user.email, user.role)
+        res.json({ accessToken, refreshToken })
       } else {
         res.status(401).send({ message: errorMessage })
       }
@@ -125,7 +135,7 @@ class AuthController implements Controller {
     }
   }
 
-  private resetPasswordHandlerGet (req: Request, res: Response): void {
+  private ResetPasswordHandlerGet (req: Request, res: Response): void {
     const email: string | undefined = req.body.email
     const user: User | undefined = users.find(u => u.email === email)
 
@@ -153,9 +163,30 @@ class AuthController implements Controller {
         const currentTokenObj: TokenDetail = { token_id: tokenId, email: user.email }
         validPasswordResetTokens.push(currentTokenObj)
       }
-      return jwt.sign({ email: user.email, token_id: tokenId }, SECRET, { expiresIn: '10m' })
+      return signPasswordResetToken(user.email, tokenId)
     } else {
       return undefined
+    }
+  }
+
+  private RefreshTokenHandler (req: Request, res: Response): void {
+    const refreshToken: string | undefined = req.body.refreshToken
+
+    if (typeof refreshToken === 'string') {
+      jwt.verify(refreshToken, REFRESH_SECRET, (err, user) => {
+        if (err instanceof Error) {
+          return res.sendStatus(401)
+        }
+
+        if (typeof user !== 'undefined') {
+          const u: any = user
+          const accessToken = signAccessToken(u.email, u.role)
+          const refreshToken = signRefreshToken(u.email, u.role)
+          res.json({ accessToken, refreshToken })
+        }
+      })
+    } else {
+      res.sendStatus(401)
     }
   }
 }
