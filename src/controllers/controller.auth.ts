@@ -17,6 +17,22 @@ const REFRESH_SECRET = process.env.REFRESH_TOKEN_SECRET as jwt.Secret
 })
 
 const users: User[] = []
+
+// adding an admin user to test out role-based access control
+;(async () => {
+  const salt = await bcrypt.genSalt(10)
+  const passwordHash = await bcrypt.hash('password', salt)
+  const adminUser: User = {
+    email: 'johndoe@example.com',
+    role: 'admin',
+    password_hash: passwordHash
+  }
+  users.push(adminUser)
+})()
+  .catch((_err) => {
+    console.log('an error occurred')
+  })
+
 let validPasswordResetTokens: TokenDetail[] = []
 let validRefreshTokens: TokenDetail[] = []
 const loggedOutAccessTokens: TokenDetail[] = []
