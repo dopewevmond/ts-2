@@ -28,6 +28,7 @@ const users: User[] = []
     password_hash: passwordHash
   }
   users.push(adminUser)
+  console.log('added admin user')
 })()
   .catch((_err) => {
     console.log('an error occurred')

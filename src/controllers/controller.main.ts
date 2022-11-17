@@ -2,8 +2,10 @@ import { Router, Request, Response } from 'express'
 import Controller from './controller.interface'
 import authenticateJWT from '../middleware/middleware.authenticatejwt'
 import checkBlacklist from '../middleware/middleware.checkblacklist'
+import verifyAdmin from '../middleware/middleware.verifyadmin'
+import Book from '../schema/book'
 
-const books = [
+const books: Book[] = [
   {
     author: 'Chinua Achebe',
     country: 'Nigeria',
@@ -39,16 +41,36 @@ class MainController implements Controller {
   }
 
   private setupRoutes (): void {
-    this.router.get(
-      this.path,
-      authenticateJWT,
-      checkBlacklist,
-      this.Homehandler
-    )
+    this.router.get(this.path, authenticateJWT, checkBlacklist, this.Homehandler)
+    this.router.post(this.path, authenticateJWT, checkBlacklist, verifyAdmin, this.AddBookHandler)
   }
 
   private Homehandler (req: Request, res: Response): void {
     res.json({ books })
+  }
+
+  private AddBookHandler (req: Request, res: Response): void {
+    const author: string = req.body.author
+    const country: string = req.body.country
+    const language: string = req.body.language
+    const pages: string = req.body.pages
+    const title: string = req.body.title
+    const year: string = req.body.year
+
+    const badRequest = [author, country, language, pages, title, year].find(prop => typeof prop === 'undefined')
+    if (typeof badRequest === 'undefined') {
+      books.push({
+        author,
+        country,
+        language,
+        pages: parseInt(pages),
+        title,
+        year: parseInt(year)
+      })
+      res.json({ message: 'success' })
+    } else {
+      res.sendStatus(400)
+    }
   }
 }
 
