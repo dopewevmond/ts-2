@@ -8,20 +8,13 @@ import makeid from '../utils/utils.generateid'
 import { signAccessToken, signRefreshToken, signPasswordResetToken } from '../utils/utils.signtoken'
 import authenticateJWT from '../middleware/middleware.authenticatejwt'
 
-// secret to be used to sign the jwt
-let SECRET: jwt.Secret
-if (typeof process.env.SECRET === 'string') {
-  SECRET = process.env.SECRET
-} else {
-  SECRET = 'N0T@reallyG00ds3cr3t'
-}
-
-let REFRESH_SECRET: jwt.Secret
-if (typeof process.env.REFRESH_TOKEN_SECRET === 'string') {
-  REFRESH_SECRET = process.env.REFRESH_TOKEN_SECRET
-} else {
-  REFRESH_SECRET = 'N0T@reallyG00dR3fr3shs3cr3t'
-}
+const SECRET = process.env.SECRET as jwt.Secret
+const REFRESH_SECRET = process.env.REFRESH_TOKEN_SECRET as jwt.Secret
+[SECRET, REFRESH_SECRET].forEach((envVar) => {
+  if (typeof envVar === 'undefined') {
+    throw new Error('Not all environment variables are defined. Check .env.example file')
+  }
+})
 
 const users: User[] = []
 let validPasswordResetTokens: TokenDetail[] = []

@@ -1,19 +1,13 @@
 import { Request, Response, NextFunction } from 'express'
 import * as jwt from 'jsonwebtoken'
 
-let SECRET: jwt.Secret
-if (typeof process.env.SECRET === 'string') {
-  SECRET = process.env.SECRET
-} else {
-  SECRET = 'N0T@reallyG00ds3cr3t'
-}
-let REFRESH_SECRET: jwt.Secret
-if (typeof process.env.REFRESH_TOKEN_SECRET === 'string') {
-  REFRESH_SECRET = process.env.REFRESH_TOKEN_SECRET
-} else {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  REFRESH_SECRET = 'N0T@reallyG00dR3fr3shs3cr3t'
-}
+const SECRET = process.env.SECRET as jwt.Secret
+const REFRESH_SECRET = process.env.REFRESH_TOKEN_SECRET as jwt.Secret
+[SECRET, REFRESH_SECRET].forEach((envVar) => {
+  if (typeof envVar === 'undefined') {
+    throw new Error('Not all environment variables are defined. Check .env.example file')
+  }
+})
 
 const authenticateJWT = (req: Request, res: Response, next: NextFunction): void => {
   const authHeader: string | undefined = req.headers.authorization
