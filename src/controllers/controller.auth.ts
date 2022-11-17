@@ -24,6 +24,7 @@ if (typeof process.env.REFRESH_TOKEN_SECRET === 'string') {
 
 const users: User[] = []
 let validPasswordResetTokens: TokenDetail[] = []
+let validRefreshTokens: TokenDetail[] = []
 
 class AuthController implements Controller {
   public path = '/auth'
@@ -60,8 +61,12 @@ class AuthController implements Controller {
     if (typeof user !== 'undefined') {
       const passwordHash = await bcrypt.compare(password, user.password_hash)
       if (passwordHash) {
+        // generate an id for the refresh token
+        const tokenId = makeid(7)
+        validRefreshTokens.push({ token_id: tokenId, email: user.email })
+
         const accessToken = signAccessToken(user.email, user.role)
-        const refreshToken = signRefreshToken(user.email, user.role)
+        const refreshToken = signRefreshToken(user.email, user.role, tokenId)
         res.json({ accessToken, refreshToken })
       } else {
         res.status(401).send({ message: errorMessage })
@@ -180,8 +185,22 @@ class AuthController implements Controller {
 
         if (typeof user !== 'undefined') {
           const u: any = user
+
+          // we want to invalidate an access token if it has already been used so...
+          // ...we check if it exists in the list of valid refresh tokens
+          const findTokenFromValidTokens: TokenDetail | undefined = validRefreshTokens.find(tokenObj => tokenObj.token_id === u.token_id)
+          if (typeof findTokenFromValidTokens === 'undefined') {
+            return res.sendStatus(401)
+          }
+
+          const newTokenId = makeid(7)
           const accessToken = signAccessToken(u.email, u.role)
-          const refreshToken = signRefreshToken(u.email, u.role)
+          const refreshToken = signRefreshToken(u.email, u.role, newTokenId)
+
+          // after signing a new refresh token let's invalidate the previous one by removing...
+          // ...from the list of valid refresh tokens
+          validRefreshTokens = validRefreshTokens.filter(tokenObj => tokenObj.token_id !== u.token_id)
+
           res.json({ accessToken, refreshToken })
         }
       })
