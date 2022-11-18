@@ -67,7 +67,7 @@ class MainController implements Controller {
         title,
         year: parseInt(year)
       })
-      res.json({ message: 'success' })
+      res.status(201).json({ message: 'book uploaded' })
     } else {
       res.sendStatus(400)
     }
