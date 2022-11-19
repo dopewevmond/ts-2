@@ -43,7 +43,7 @@ class AuthController implements Controller {
   public router = Router()
 
   constructor () {
-    this.ResetPasswordHandlerGet = this.ResetPasswordHandlerGet.bind(this)
+    this.ResetPasswordRequest = this.ResetPasswordRequest.bind(this)
     this.setupRoutes()
   }
 
@@ -52,7 +52,7 @@ class AuthController implements Controller {
     this.router.post(`${this.path}/login`, this.LoginHandler)
     // eslint-disable-next-line @typescript-eslint/no-misused-promises
     this.router.post(`${this.path}/register`, this.RegisterHandler)
-    this.router.get(`${this.path}/reset_password`, this.ResetPasswordHandlerGet)
+    this.router.post(`${this.path}/reset-password-request`, this.ResetPasswordRequest)
     this.router.post(`${this.path}/reset_password`, this.ResetPasswordHandlerPost)
     this.router.post(`${this.path}/refresh-token`, this.RefreshTokenHandler)
     this.router.post(`${this.path}/logout`, authenticateJWT, this.LogoutHandler)
@@ -152,14 +152,14 @@ class AuthController implements Controller {
     }
   }
 
-  private ResetPasswordHandlerGet (req: Request, res: Response): void {
+  private ResetPasswordRequest (req: Request, res: Response): void {
     const email: string | undefined = req.body.email
     const user: User | undefined = users.find(u => u.email === email)
 
     if (typeof email !== 'undefined' && typeof user !== 'undefined') {
       res.json({ passwordResetToken: this.getPasswordResetToken(email) })
     } else {
-      res.json({ message: 'a link containing reset instructions has been sent to your email' })
+      res.json({ message: 'this email does not exist. please check the email and try again' })
     }
   }
 
