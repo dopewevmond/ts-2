@@ -4,7 +4,7 @@
 
 GET `/`<br>
 Requires authorization token with role: `admin` or `member`.<br>
-On success, returns
+On success, returns a list of books in this format
 ```
 books = [
   {
@@ -49,7 +49,7 @@ Everytime the server starts a user with an `admin` role is created with credenti
   Email = "johndoe@example.com"
   Password = "password"
 ```
-New users can be created using the `/register` route but they will have a role of `member`.<br>
+New users can be created using the `/auth/register` route but they will have a role of `member`.<br>
 
 
 POST `/auth/login`<br>
