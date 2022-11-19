@@ -53,7 +53,7 @@ class AuthController implements Controller {
     // eslint-disable-next-line @typescript-eslint/no-misused-promises
     this.router.post(`${this.path}/register`, this.RegisterHandler)
     this.router.post(`${this.path}/reset-password-request`, this.ResetPasswordRequest)
-    this.router.post(`${this.path}/reset_password`, this.ResetPasswordHandlerPost)
+    this.router.post(`${this.path}/reset-password`, this.ResetPasswordHandlerPost)
     this.router.post(`${this.path}/refresh-token`, this.RefreshTokenHandler)
     this.router.post(`${this.path}/logout`, authenticateJWT, this.LogoutHandler)
   }
