@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-misused-promises */
 import Controller from './controller.interface'
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express'
 import * as jwt from 'jsonwebtoken'
@@ -33,9 +34,7 @@ class AuthController implements Controller {
   }
 
   private setupRoutes (): void {
-    // eslint-disable-next-line @typescript-eslint/no-misused-promises
     this.router.post(`${this.path}/login`, this.LoginHandler)
-    // eslint-disable-next-line @typescript-eslint/no-misused-promises
     this.router.post(`${this.path}/register`, this.RegisterHandler)
     this.router.post(`${this.path}/reset-password-request`, this.ResetPasswordRequest)
     this.router.post(`${this.path}/reset-password`, this.ResetPasswordHandlerPost)
@@ -44,123 +43,100 @@ class AuthController implements Controller {
   }
 
   private async LoginHandler (req: Request, res: Response): Promise<void> {
-    let errorMessage = 'email or password incorrect'
-
     const email: string = req.body.email
     const password: string = req.body.password
 
     if (email != null && password != null) {
-      userRepository.findOneBy({ email })
-        .then(async (user) => {
-          if (user != null) {
-            const passwordHash = await bcrypt.compare(password, user.password_hash)
-            if (passwordHash) {
-              // generate an id for the refresh token
-              const tokenId = makeid(7)
-              validRefreshTokens.push({ token_id: tokenId, email: user.email })
-
-              const accessToken = signAccessToken(user.email, user.role, tokenId)
-              const refreshToken = signRefreshToken(user.email, user.role, tokenId)
-              res.json({ accessToken, refreshToken })
-            } else {
-              res.status(401).send({ message: errorMessage })
-            }
-          } else {
-            res.status(401).json({ message: errorMessage })
-          }
-        })
-        .catch((error) => {
-          res.status(500).json({ message: error.message })
-        })
+      const user = await userRepository.findOneBy({ email })
+      if (user != null) {
+        const passwordMatch = await bcrypt.compare(password, user.password_hash)
+        if (passwordMatch) {
+          const tokenId = makeid(7)
+          validRefreshTokens.push({ token_id: tokenId, email: user.email })
+          const accessToken = signAccessToken(user.email, user.role, tokenId)
+          const refreshToken = signRefreshToken(user.email, user.role, tokenId)
+          res.json({ accessToken, refreshToken })
+        } else {
+          res.status(401).json({ message: 'email or password incorrect' })
+        }
+      } else {
+        res.status(401).json({ message: 'email or password incorrect' })
+      }
     } else {
-      errorMessage = 'please provide email and password in request body'
-      res.status(400).json({ message: errorMessage })
+      res.status(400).json({ message: 'email or password missing from request' })
     }
   }
 
   private async RegisterHandler (req: Request, res: Response): Promise<void> {
-    let errorMessage = 'The email is already in use. Please select a new one'
-
     const email: string = req.body.email
     const password: string = req.body.password
 
-    if (typeof email !== 'string' || typeof password !== 'string') {
-      errorMessage = 'please provide email and password in request body'
-    }
-
-    const user = await userRepository.findOneBy({ email })
-
-    // we want to create a new user only when its email does not exist
-    if (user == null) {
-      const salt = await bcrypt.genSalt(10)
-      const hashedPassword = await bcrypt.hash(password, salt)
-
-      const newUser = new User()
-      newUser.email = email
-      newUser.password_hash = hashedPassword
-      newUser.role = 'member'
-      const status = await userRepository.save(newUser)
-      res.status(201).json({ message: 'user created successfully', id: status.id })
+    if (email != null && password != null) {
+      const user = await userRepository.findOneBy({ email })
+      // we want to create a new user only when its email does not exist
+      if (user == null) {
+        const salt = await bcrypt.genSalt(10)
+        const hashedPassword = await bcrypt.hash(password, salt)
+        const newUser = new User()
+        newUser.email = email
+        newUser.password_hash = hashedPassword
+        newUser.role = 'member'
+        const createdUser = await userRepository.save(newUser)
+        res.status(201).json({ message: 'user created successfully', id: createdUser.id })
+      } else {
+        res.status(400).json({ message: 'user with same email already exists. please choose another ' })
+      }
     } else {
-      res.status(400).json({ message: errorMessage })
+      res.status(400).json({ message: 'email or password missing from request' })
     }
   }
 
-  private ResetPasswordHandlerPost (req: Request, res: Response): void {
-    const token: string | undefined = req.body.resetToken
-    const newPassword: string | undefined = req.body.newPassword
+  private async ResetPasswordHandlerPost (req: Request, res: Response): Promise<void> {
+    const token: string = req.body.resetToken
+    const newPassword: string = req.body.newPassword
 
-    if (typeof token === 'string' && typeof newPassword === 'string') {
-      // eslint-disable-next-line @typescript-eslint/no-misused-promises
-      jwt.verify(token, SECRET, async (err, user: jwt.JwtPayload) => {
-        if (err instanceof Error) {
-          return res.sendStatus(401)
-        }
-
+    if (token != null && newPassword != null) {
+      try {
+        const user = jwt.verify(token, SECRET) as jwt.JwtPayload
         // checking if its token id exists in the validResetTokens array
         // if it doesn't exist, it means a more recent password reset token has
         // been generated (or it has already been used), which makes it invalid
-        const findTokenFromValidTokens: TokenDetail | undefined = validPasswordResetTokens.find(tokenObj => tokenObj.token_id === user.token_id)
-        if (typeof findTokenFromValidTokens === 'undefined') {
-          return res.sendStatus(401)
-        }
-
-        const userToChangePassword = await userRepository.findOneBy({ email: user.email })
-
-        if (userToChangePassword != null) {
-          const salt = await bcrypt.genSalt(10)
-          userToChangePassword.password_hash = await bcrypt.hash(newPassword, salt)
-          await userRepository.save(userToChangePassword)
-
-          // after successfully resetting password we want to delete the token id from the validResetTokens
-          validPasswordResetTokens = validPasswordResetTokens.filter(tokenObj => tokenObj.email !== userToChangePassword.email)
-          res.status(200).json({ message: 'password changed successfully' })
+        const findTokenFromValidTokens = validPasswordResetTokens.find(tokenObj => tokenObj.token_id === user.token_id)
+        if (findTokenFromValidTokens != null) {
+          const userToChangePassword = await userRepository.findOneBy({ email: user.email })
+          if (userToChangePassword != null) {
+            const salt = await bcrypt.genSalt(10)
+            userToChangePassword.password_hash = await bcrypt.hash(newPassword, salt)
+            await userRepository.save(userToChangePassword)
+            // after successfully resetting password we want to delete the token id from the validResetTokens
+            validPasswordResetTokens = validPasswordResetTokens.filter(tokenObj => tokenObj.email !== userToChangePassword.email)
+            res.status(200).json({ message: 'password changed successfully' })
+          } else {
+            res.status(404).json({ message: 'the user was not found' })
+          }
         } else {
-          res.status(404).json({ message: 'user does not exist' })
+          res.status(401).json({ message: 'the password reset token is invalid' })
         }
-      })
+      } catch (error) {
+        res.status(401).json({ message: error.message })
+      }
     } else {
-      res.status(400).json({ message: 'Bad request' })
+      res.status(400).json({ message: 'password reset token or new password missing from request' })
     }
   }
 
-  private ResetPasswordRequest (req: Request, res: Response): void {
+  private async ResetPasswordRequest (req: Request, res: Response): Promise<void> {
     const email = req.body.email
 
     if (email != null) {
-      userRepository.findOneBy({ email })
-        .then((user) => {
-          if (user != null) {
-            res.json({ passwordResetToken: this.getPasswordResetToken(email) })
-          } else {
-            res.status(400).json({ message: 'this email does not exist. please check the email and try again' })
-          }
-        })
-        .catch((error) => {
-          res.status(500).json({ message: error.message })
-        })
+      const user = userRepository.findOneBy({ email })
+      if (user != null) {
+        res.json({ passwordResetToken: this.getPasswordResetToken(email) })
+      } else {
+        res.status(404).json({ message: 'this email does not exist. please check the email and try again' })
+      }
     } else {
-      res.status(400).json({ message: 'this email does not exist' })
+      res.status(400).json({ message: 'email missing from request' })
     }
   }
 
