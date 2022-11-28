@@ -1,12 +1,15 @@
 import Controller from './controller.interface'
 import { Router, Request, Response, NextFunction, RequestHandler } from 'express'
 import * as jwt from 'jsonwebtoken'
-import User from '../schema/user'
 import TokenDetail from '../schema/tokenDetail'
 import * as bcrypt from 'bcrypt'
 import makeid from '../utils/utils.generateid'
 import { signAccessToken, signRefreshToken, signPasswordResetToken } from '../utils/utils.signtoken'
 import authenticateJWT from '../middleware/middleware.authenticatejwt'
+import AppDataSource from '../datasource'
+import User from '../entities/entity.user'
+
+const userRepository = AppDataSource.getRepository(User)
 
 const SECRET = process.env.SECRET as jwt.Secret
 const REFRESH_SECRET = process.env.REFRESH_TOKEN_SECRET as jwt.Secret
@@ -15,24 +18,6 @@ const REFRESH_SECRET = process.env.REFRESH_TOKEN_SECRET as jwt.Secret
     throw new Error('Not all environment variables are defined. Check .env.example file')
   }
 })
-
-const users: User[] = []
-
-// adding an admin user to test out role-based access control
-;(async () => {
-  const salt = await bcrypt.genSalt(10)
-  const passwordHash = await bcrypt.hash('password', salt)
-  const adminUser: User = {
-    email: 'johndoe@example.com',
-    role: 'admin',
-    password_hash: passwordHash
-  }
-  users.push(adminUser)
-  console.log('added admin user')
-})()
-  .catch((_err) => {
-    console.log('an error occurred')
-  })
 
 let validPasswordResetTokens: TokenDetail[] = []
 let validRefreshTokens: TokenDetail[] = []
@@ -64,27 +49,32 @@ class AuthController implements Controller {
     const email: string = req.body.email
     const password: string = req.body.password
 
-    if (typeof email !== 'string' || typeof password !== 'string') {
-      errorMessage = 'please provide email and password in request body'
-    }
+    if (email != null && password != null) {
+      userRepository.findOneBy({ email })
+        .then(async (user) => {
+          if (user != null) {
+            const passwordHash = await bcrypt.compare(password, user.password_hash)
+            if (passwordHash) {
+              // generate an id for the refresh token
+              const tokenId = makeid(7)
+              validRefreshTokens.push({ token_id: tokenId, email: user.email })
 
-    const user: User | undefined = users.find(u => u.email === email)
-
-    if (typeof user !== 'undefined') {
-      const passwordHash = await bcrypt.compare(password, user.password_hash)
-      if (passwordHash) {
-        // generate an id for the refresh token
-        const tokenId = makeid(7)
-        validRefreshTokens.push({ token_id: tokenId, email: user.email })
-
-        const accessToken = signAccessToken(user.email, user.role, tokenId)
-        const refreshToken = signRefreshToken(user.email, user.role, tokenId)
-        res.json({ accessToken, refreshToken })
-      } else {
-        res.status(401).send({ message: errorMessage })
-      }
+              const accessToken = signAccessToken(user.email, user.role, tokenId)
+              const refreshToken = signRefreshToken(user.email, user.role, tokenId)
+              res.json({ accessToken, refreshToken })
+            } else {
+              res.status(401).send({ message: errorMessage })
+            }
+          } else {
+            res.status(401).json({ message: errorMessage })
+          }
+        })
+        .catch((error) => {
+          res.status(500).json({ message: error.message })
+        })
     } else {
-      res.status(401).json({ message: errorMessage })
+      errorMessage = 'please provide email and password in request body'
+      res.status(400).json({ message: errorMessage })
     }
   }
 
@@ -98,18 +88,19 @@ class AuthController implements Controller {
       errorMessage = 'please provide email and password in request body'
     }
 
-    const user: User | undefined = users.find(u => u.email === email)
+    const user = await userRepository.findOneBy({ email })
 
-    if (typeof user === 'undefined') {
+    // we want to create a new user only when its email does not exist
+    if (user == null) {
       const salt = await bcrypt.genSalt(10)
       const hashedPassword = await bcrypt.hash(password, salt)
-      const newUser: User = {
-        email,
-        password_hash: hashedPassword,
-        role: 'member'
-      }
-      users.push(newUser)
-      res.status(201).json({ message: 'user created successfully' })
+
+      const newUser = new User()
+      newUser.email = email
+      newUser.password_hash = hashedPassword
+      newUser.role = 'member'
+      const status = await userRepository.save(newUser)
+      res.status(201).json({ message: 'user created successfully', id: status.id })
     } else {
       res.status(400).json({ message: errorMessage })
     }
@@ -134,11 +125,12 @@ class AuthController implements Controller {
           return res.sendStatus(401)
         }
 
-        const userToChangePassword: User | undefined = users.find(u => u.email === user.email)
+        const userToChangePassword = await userRepository.findOneBy({ email: user.email })
 
-        if (typeof userToChangePassword !== 'undefined') {
+        if (userToChangePassword != null) {
           const salt = await bcrypt.genSalt(10)
           userToChangePassword.password_hash = await bcrypt.hash(newPassword, salt)
+          await userRepository.save(userToChangePassword)
 
           // after successfully resetting password we want to delete the token id from the validResetTokens
           validPasswordResetTokens = validPasswordResetTokens.filter(tokenObj => tokenObj.email !== userToChangePassword.email)
@@ -153,37 +145,40 @@ class AuthController implements Controller {
   }
 
   private ResetPasswordRequest (req: Request, res: Response): void {
-    const email: string | undefined = req.body.email
-    const user: User | undefined = users.find(u => u.email === email)
+    const email = req.body.email
 
-    if (typeof email !== 'undefined' && typeof user !== 'undefined') {
-      res.json({ passwordResetToken: this.getPasswordResetToken(email) })
+    if (email != null) {
+      userRepository.findOneBy({ email })
+        .then((user) => {
+          if (user != null) {
+            res.json({ passwordResetToken: this.getPasswordResetToken(email) })
+          } else {
+            res.status(400).json({ message: 'this email does not exist. please check the email and try again' })
+          }
+        })
+        .catch((error) => {
+          res.status(500).json({ message: error.message })
+        })
     } else {
-      res.json({ message: 'this email does not exist. please check the email and try again' })
+      res.status(400).json({ message: 'this email does not exist' })
     }
   }
 
   private getPasswordResetToken (email: string): string | undefined {
-    const user: User | undefined = users.find(u => u.email === email)
-
-    if (typeof user !== 'undefined') {
-      // to invalidate any previously generated password reset tokens we keep track of the most...
-      // ...recent token by generating a random token_id
-      const tokenId = makeid(7)
-      const previousTokenObj = validPasswordResetTokens.find(tokenObj => tokenObj.email === user.email)
-      if (typeof previousTokenObj !== 'undefined') {
-        // a reset token has previously been generated for that email so the...
-        // ...token id is updated to this current token being created, thereby invalidating...
-        // ...previously generated tokens
-        previousTokenObj.token_id = tokenId
-      } else {
-        const currentTokenObj: TokenDetail = { token_id: tokenId, email: user.email }
-        validPasswordResetTokens.push(currentTokenObj)
-      }
-      return signPasswordResetToken(user.email, tokenId)
+    // to invalidate any previously generated password reset tokens we keep track of the most...
+    // ...recent token by generating a random token_id
+    const tokenId = makeid(7)
+    const previousTokenObj = validPasswordResetTokens.find(tokenObj => tokenObj.email === email)
+    if (previousTokenObj != null) {
+      // a reset token has previously been generated for that email so the...
+      // ...token id is updated to this current token being created, thereby invalidating...
+      // ...previously generated tokens
+      previousTokenObj.token_id = tokenId
     } else {
-      return undefined
+      const currentTokenObj: TokenDetail = { token_id: tokenId, email }
+      validPasswordResetTokens.push(currentTokenObj)
     }
+    return signPasswordResetToken(email, tokenId)
   }
 
   private RefreshTokenHandler (req: Request, res: Response): void {
