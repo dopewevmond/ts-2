@@ -3,34 +3,10 @@ import Controller from './controller.interface'
 import authenticateJWT from '../middleware/middleware.authenticatejwt'
 import checkBlacklist from '../middleware/middleware.checkblacklist'
 import verifyAdmin from '../middleware/middleware.verifyadmin'
-import Book from '../schema/book'
+import AppDataSource from '../datasource'
+import Book from '../entities/entity.book'
 
-const books: Book[] = [
-  {
-    author: 'Chinua Achebe',
-    country: 'Nigeria',
-    language: 'English',
-    pages: 209,
-    title: 'Things Fall Apart',
-    year: 1958
-  },
-  {
-    author: 'Hans Christian Andersen',
-    country: 'Denmark',
-    language: 'Danish',
-    pages: 784,
-    title: 'Fairy tales',
-    year: 1836
-  },
-  {
-    author: 'Dante Alighieri',
-    country: 'Italy',
-    language: 'Italian',
-    pages: 928,
-    title: 'The Divine Comedy',
-    year: 1315
-  }
-]
+const booksRepository = AppDataSource.getRepository(Book)
 
 class MainController implements Controller {
   public path = '/'
@@ -46,7 +22,13 @@ class MainController implements Controller {
   }
 
   private Homehandler (req: Request, res: Response): void {
-    res.json({ books })
+    booksRepository.find()
+      .then((books) => {
+        res.json({ books })
+      })
+      .catch(({ message }) => {
+        res.status(500).json({ message })
+      })
   }
 
   private AddBookHandler (req: Request, res: Response): void {
@@ -59,15 +41,20 @@ class MainController implements Controller {
 
     const badRequest = [author, country, language, pages, title, year].find(prop => typeof prop === 'undefined')
     if (typeof badRequest === 'undefined') {
-      books.push({
-        author,
-        country,
-        language,
-        pages: parseInt(pages),
-        title,
-        year: parseInt(year)
-      })
-      res.status(201).json({ message: 'book uploaded' })
+      const book = new Book()
+      book.author = author
+      book.country = country
+      book.language = language
+      book.pages = parseInt(pages)
+      book.title = title
+      book.year = parseInt(year)
+      booksRepository.save(book)
+        .then((savedBook) => {
+          res.status(201).json({ message: 'book created successfully', ...savedBook })
+        })
+        .catch(({ message }) => {
+          res.status(500).json({ message })
+        })
     } else {
       res.sendStatus(400)
     }
