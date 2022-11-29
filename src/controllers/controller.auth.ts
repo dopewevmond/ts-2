@@ -9,6 +9,7 @@ import { signAccessToken, signRefreshToken, signPasswordResetToken } from '../ut
 import authenticateJWT from '../middleware/middleware.authenticatejwt'
 import AppDataSource from '../datasource'
 import User from '../entities/entity.user'
+import AppError from '../exceptions/exception.apperror'
 
 const userRepository = AppDataSource.getRepository(User)
 
@@ -42,52 +43,60 @@ class AuthController implements Controller {
     this.router.post(`${this.path}/logout`, authenticateJWT, this.LogoutHandler)
   }
 
-  private async LoginHandler (req: Request, res: Response): Promise<void> {
+  private async LoginHandler (req: Request, res: Response, next: NextFunction): Promise<void> {
     const email: string = req.body.email
     const password: string = req.body.password
 
-    if (email != null && password != null) {
-      const user = await userRepository.findOneBy({ email })
-      if (user != null) {
-        const passwordMatch = await bcrypt.compare(password, user.password_hash)
-        if (passwordMatch) {
-          const tokenId = makeid(7)
-          validRefreshTokens.push({ token_id: tokenId, email: user.email })
-          const accessToken = signAccessToken(user.email, user.role, tokenId)
-          const refreshToken = signRefreshToken(user.email, user.role, tokenId)
-          res.json({ accessToken, refreshToken })
+    try {
+      if (email != null && password != null) {
+        const user = await userRepository.findOneBy({ email })
+        if (user != null) {
+          const passwordMatch = await bcrypt.compare(password, user.password_hash)
+          if (passwordMatch) {
+            const tokenId = makeid(7)
+            validRefreshTokens.push({ token_id: tokenId, email: user.email })
+            const accessToken = signAccessToken(user.email, user.role, tokenId)
+            const refreshToken = signRefreshToken(user.email, user.role, tokenId)
+            res.json({ accessToken, refreshToken })
+          } else {
+            next(new AppError(401, 'email or password incorrect'))
+          }
         } else {
-          res.status(401).json({ message: 'email or password incorrect' })
+          next(new AppError(401, 'email or password incorrect'))
         }
       } else {
-        res.status(401).json({ message: 'email or password incorrect' })
+        next(new AppError(400, 'email or password missing from request'))
       }
-    } else {
-      res.status(400).json({ message: 'email or password missing from request' })
+    } catch (error) {
+      next(new AppError(401, error.message))
     }
   }
 
-  private async RegisterHandler (req: Request, res: Response): Promise<void> {
+  private async RegisterHandler (req: Request, res: Response, next: NextFunction): Promise<void> {
     const email: string = req.body.email
     const password: string = req.body.password
 
-    if (email != null && password != null) {
-      const user = await userRepository.findOneBy({ email })
-      // we want to create a new user only when its email does not exist
-      if (user == null) {
-        const salt = await bcrypt.genSalt(10)
-        const hashedPassword = await bcrypt.hash(password, salt)
-        const newUser = new User()
-        newUser.email = email
-        newUser.password_hash = hashedPassword
-        newUser.role = 'member'
-        const createdUser = await userRepository.save(newUser)
-        res.status(201).json({ message: 'user created successfully', id: createdUser.id })
+    try {
+      if (email != null && password != null) {
+        const user = await userRepository.findOneBy({ email })
+        // we want to create a new user only when its email does not exist
+        if (user == null) {
+          const salt = await bcrypt.genSalt(10)
+          const hashedPassword = await bcrypt.hash(password, salt)
+          const newUser = new User()
+          newUser.email = email
+          newUser.password_hash = hashedPassword
+          newUser.role = 'member'
+          const createdUser = await userRepository.save(newUser)
+          res.status(201).json({ message: 'user created successfully', id: createdUser.id })
+        } else {
+          next(new AppError(401, 'user with same email already exists. please choose another'))
+        }
       } else {
-        res.status(400).json({ message: 'user with same email already exists. please choose another ' })
+        next(new AppError(400, 'email or password missing from request'))
       }
-    } else {
-      res.status(400).json({ message: 'email or password missing from request' })
+    } catch (error) {
+      next(new AppError(500, error.message))
     }
   }
 
@@ -125,16 +134,19 @@ class AuthController implements Controller {
     }
   }
 
-  private async ResetPasswordRequest (req: Request, res: Response): Promise<void> {
+  private ResetPasswordRequest (req: Request, res: Response): void {
     const email = req.body.email
 
     if (email != null) {
-      const user = userRepository.findOneBy({ email })
-      if (user != null) {
-        res.json({ passwordResetToken: this.getPasswordResetToken(email) })
-      } else {
-        res.status(404).json({ message: 'this email does not exist. please check the email and try again' })
-      }
+      userRepository.findOneBy({ email })
+        .then((user) => {
+          if (user != null) {
+            res.json({ passwordResetToken: this.getPasswordResetToken(email) })
+          } else {
+            res.status(404).json({ message: 'this email does not exist. please check the email and try again' })
+          }
+        })
+        .catch((error) => { console.log(error) })
     } else {
       res.status(400).json({ message: 'email missing from request' })
     }

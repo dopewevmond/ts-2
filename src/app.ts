@@ -5,6 +5,7 @@ import * as dotenv from 'dotenv'
 import * as Sentry from '@sentry/node'
 import '@sentry/tracing'
 import * as morgan from 'morgan'
+import AppError from './exceptions/exception.apperror'
 
 dotenv.config()
 
@@ -31,8 +32,8 @@ class App {
     this.app.use(morgan('dev'))
   }
 
-  private ErrorHandlerMiddleware (error: Error, req: express.Request, res: express.Response, next: express.NextFunction): void {
-    res.status(500).json({ message: error.message })
+  private ErrorHandlerMiddleware (error: AppError, req: express.Request, res: express.Response, next: express.NextFunction): void {
+    res.status(error.statusCode).json({ message: error.message })
   }
 
   public listen (): void {
