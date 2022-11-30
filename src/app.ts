@@ -20,9 +20,14 @@ const DB_NAME = process.env.DB_NAME as string
 const REDIS_HOST = process.env.REDIS_HOST as string
 const REDIS_PORT = process.env.REDIS_PORT as string
 const ACCESS_TOKEN_EXPIRY_TIME = process.env.ACCESS_TOKEN_EXPIRY_TIME as string
+const RESET_TOKEN_EXPIRY_TIME = process.env.PASSWORD_RESET_TOKEN_EXPIRY_TIME as string
 const REFRESH_TOKEN_EXPIRY_TIME = process.env.REFRESH_TOKEN_EXPIRY_TIME as string
 
-[PORT, SECRET, REFRESH_TOKEN_SECRET, DB_HOST, DB_PORT, DB_USERNAME, DB_PASSWORD, DB_NAME, REDIS_HOST, REDIS_PORT, ACCESS_TOKEN_EXPIRY_TIME, REFRESH_TOKEN_EXPIRY_TIME].forEach((envVar) => {
+[
+  PORT,SECRET, REFRESH_TOKEN_SECRET, DB_HOST, DB_PORT,
+  DB_USERNAME, DB_PASSWORD, DB_NAME, REDIS_HOST, REDIS_PORT,
+  ACCESS_TOKEN_EXPIRY_TIME, REFRESH_TOKEN_EXPIRY_TIME, RESET_TOKEN_EXPIRY_TIME
+].forEach((envVar) => {
   if (typeof envVar === 'undefined' || envVar === '') {
     throw new Error(`${envVar} environment variable not defined. check .env file for details`)
   }
