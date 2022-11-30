@@ -1,29 +1,38 @@
 /* eslint-disable @typescript-eslint/no-misused-promises */
 import Controller from './controller.interface'
-import { Router, Request, Response, NextFunction, RequestHandler } from 'express'
+import { Router, Request, Response, NextFunction } from 'express'
 import * as jwt from 'jsonwebtoken'
-import TokenDetail from '../schema/tokenDetail'
 import * as bcrypt from 'bcrypt'
 import makeid from '../utils/utils.generateid'
 import { signAccessToken, signRefreshToken, signPasswordResetToken } from '../utils/utils.signtoken'
-import authenticateJWT from '../middleware/middleware.authenticatejwt'
 import AppDataSource from '../datasource'
 import User from '../entities/entity.user'
 import AppError from '../exceptions/exception.apperror'
+import * as redis from 'redis'
+import IRedisPrefix from '../schema/redisprefix'
 
 const userRepository = AppDataSource.getRepository(User)
 
 const SECRET = process.env.SECRET as jwt.Secret
 const REFRESH_SECRET = process.env.REFRESH_TOKEN_SECRET as jwt.Secret
+
 [SECRET, REFRESH_SECRET].forEach((envVar) => {
   if (typeof envVar === 'undefined') {
     throw new Error('Not all environment variables are defined. Check .env.example file')
   }
 })
 
-let validPasswordResetTokens: TokenDetail[] = []
-let validRefreshTokens: TokenDetail[] = []
-const loggedOutAccessTokens: TokenDetail[] = []
+// connecting to redis
+let redisClient: redis.RedisClientType
+;(async () => {
+  redisClient = redis.createClient()
+  redisClient.on('error', (error) => console.error(error))
+
+  await redisClient.connect()
+})()
+  .then(() => console.log('auth connected to redis...'))
+  .catch((err) => { console.log(err) })
+
 
 class AuthController implements Controller {
   public path = '/auth'
@@ -40,7 +49,7 @@ class AuthController implements Controller {
     this.router.post(`${this.path}/reset-password-request`, this.ResetPasswordRequest)
     this.router.post(`${this.path}/reset-password`, this.ResetPasswordHandlerPost)
     this.router.post(`${this.path}/refresh-token`, this.RefreshTokenHandler)
-    this.router.post(`${this.path}/logout`, authenticateJWT, this.LogoutHandler)
+    this.router.post(`${this.path}/logout`, this.LogoutHandler)
   }
 
   private async LoginHandler (req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -53,8 +62,9 @@ class AuthController implements Controller {
         if (user != null) {
           const passwordMatch = await bcrypt.compare(password, user.password_hash)
           if (passwordMatch) {
-            const tokenId = makeid(7)
-            validRefreshTokens.push({ token_id: tokenId, email: user.email })
+            const tokenId = makeid(128)
+            const redisPrefix: IRedisPrefix = 'refreshToken-'
+            await redisClient.set(redisPrefix + tokenId, 'exists')
             const accessToken = signAccessToken(user.email, user.role, tokenId)
             const refreshToken = signRefreshToken(user.email, user.role, tokenId)
             res.json({ accessToken, refreshToken })
@@ -110,15 +120,16 @@ class AuthController implements Controller {
         // checking if its token id exists in the validResetTokens array
         // if it doesn't exist, it means a more recent password reset token has
         // been generated (or it has already been used), which makes it invalid
-        const findTokenFromValidTokens = validPasswordResetTokens.find(tokenObj => tokenObj.token_id === user.token_id)
-        if (findTokenFromValidTokens != null) {
+        const redisPrefix: IRedisPrefix = 'resetToken-'
+        const tokenObj = await redisClient.get(redisPrefix + user.email)
+
+        if (tokenObj != null) {
           const userToChangePassword = await userRepository.findOneBy({ email: user.email })
           if (userToChangePassword != null) {
             const salt = await bcrypt.genSalt(10)
             userToChangePassword.password_hash = await bcrypt.hash(newPassword, salt)
             await userRepository.save(userToChangePassword)
-            // after successfully resetting password we want to delete the token id from the validResetTokens
-            validPasswordResetTokens = validPasswordResetTokens.filter(tokenObj => tokenObj.email !== userToChangePassword.email)
+            await redisClient.del('resetToken-' + user.email)
             res.status(200).json({ message: 'password changed successfully' })
           } else {
             res.status(404).json({ message: 'the user was not found' })
@@ -134,100 +145,79 @@ class AuthController implements Controller {
     }
   }
 
-  private ResetPasswordRequest (req: Request, res: Response): void {
+  private async ResetPasswordRequest (req: Request, res: Response, next: NextFunction): Promise<void> {
     const email = req.body.email
-
-    if (email != null) {
-      userRepository.findOneBy({ email })
-        .then((user) => {
-          if (user != null) {
-            res.json({ passwordResetToken: this.getPasswordResetToken(email) })
-          } else {
-            res.status(404).json({ message: 'this email does not exist. please check the email and try again' })
-          }
-        })
-        .catch((error) => { console.log(error) })
-    } else {
-      res.status(400).json({ message: 'email missing from request' })
+    try {    
+      if (email != null) {
+        const user = await userRepository.findOneBy({ email })
+        if (user != null) {
+          res.json({ passwordResetToken: this.getPasswordResetToken(email) })
+        } else {
+          res.status(404).json({ message: 'this email does not exist. please check the email and try again' })
+        }
+      } else {
+        res.status(400).json({ message: 'email missing from request' })
+      }
+    } catch (error) {
+      next(new AppError(500, 'an error occurred'))
     }
   }
 
-  private getPasswordResetToken (email: string): string | undefined {
+  private async getPasswordResetToken (email: string): Promise<string|undefined> {
     // to invalidate any previously generated password reset tokens we keep track of the most...
     // ...recent token by generating a random token_id
-    const tokenId = makeid(7)
-    const previousTokenObj = validPasswordResetTokens.find(tokenObj => tokenObj.email === email)
-    if (previousTokenObj != null) {
-      // a reset token has previously been generated for that email so the...
-      // ...token id is updated to this current token being created, thereby invalidating...
-      // ...previously generated tokens
-      previousTokenObj.token_id = tokenId
+    const tokenId = makeid(128)
+    const redisPrefix: IRedisPrefix = 'resetToken-'
+    const prevResetTokenObj = await redisClient.get(redisPrefix + email)
+    if (prevResetTokenObj != null) {
+      const deserializedTokenObj = JSON.parse(prevResetTokenObj)
+      deserializedTokenObj.token_id = tokenId
+      await redisClient.set(redisPrefix + email, JSON.stringify(deserializedTokenObj))
     } else {
-      const currentTokenObj: TokenDetail = { token_id: tokenId, email }
-      validPasswordResetTokens.push(currentTokenObj)
+      const newPasswordRefreshTokenObj = { token_id: tokenId, email }
+      await redisClient.set(redisPrefix + email, JSON.stringify(newPasswordRefreshTokenObj))
     }
     return signPasswordResetToken(email, tokenId)
   }
 
-  private RefreshTokenHandler (req: Request, res: Response): void {
+  private async RefreshTokenHandler (req: Request, res: Response, next: NextFunction): Promise<void> {
     const refreshToken: string | undefined = req.body.refreshToken
 
-    if (typeof refreshToken === 'string') {
-      jwt.verify(refreshToken, REFRESH_SECRET, (err, user) => {
-        if (err instanceof Error) {
-          return res.sendStatus(401)
-        }
+    if (refreshToken != null) {
+      try {
+        const decoded = jwt.verify(refreshToken, REFRESH_SECRET)
+        const u: any = decoded
+        const refreshTokenId: string = u.token_id
+        const redisPrefix: IRedisPrefix = 'refreshToken-'
+        const isRefreshTokenValid = redisClient.get(redisPrefix + refreshTokenId)
 
-        if (typeof user !== 'undefined') {
-          const u: any = user
-
-          // we want to invalidate an access token if it has already been used so...
-          // ...we check if it exists in the list of valid refresh tokens
-          const findTokenFromValidTokens: TokenDetail | undefined = validRefreshTokens.find(tokenObj => tokenObj.token_id === u.token_id)
-          if (typeof findTokenFromValidTokens === 'undefined') {
-            return res.sendStatus(401)
-          }
-
-          const newTokenId = makeid(7)
+        if (isRefreshTokenValid != null) {
+          const newTokenId = makeid(128)
           const accessToken = signAccessToken(u.email, u.role, newTokenId)
           const refreshToken = signRefreshToken(u.email, u.role, newTokenId)
 
-          // after signing a new refresh token let's invalidate the previous one by removing...
-          // ...from the list of valid refresh tokens
-          validRefreshTokens = validRefreshTokens.filter(tokenObj => tokenObj.token_id !== u.token_id)
-
+          // we've used the refresh token to generate new access and refresh tokens to we should invalidate the previous one
+          await redisClient.del(redisPrefix + refreshTokenId)
+          await redisClient.set(redisPrefix + newTokenId, 'exists')
           res.json({ accessToken, refreshToken })
+        } else {
+          next(new AppError(401, 'invalid refresh token'))
         }
-      })
+      } catch (error) {
+        next(new AppError(401, error.message))
+      }
     } else {
-      res.sendStatus(401)
+      next(new AppError(401, 'refresh token missing from request'))
     }
   }
 
-  private LogoutHandler (req: Request, res: Response): void {
-    const userEmail: string = res.locals.user.email
+  private async LogoutHandler (req: Request, res: Response): Promise<void> {
     const tokenId: string = res.locals.user.token_id
-    loggedOutAccessTokens.push({ email: userEmail, token_id: tokenId })
+    const redisPrefix: IRedisPrefix = 'loggedOutAccessToken-'
+    await redisClient.set(redisPrefix + tokenId, 'exists')
 
     res.json({ message: 'logged out successfully' })
   }
 }
 
-function getCheckBlacklistMiddleware (): RequestHandler {
-  // passing in blacklistedAccessTokens by reference so that checkBlacklist (which will be exported from this file)...
-  // ...can access it by virtue of a closure
-  const blacklistedAccessTokens = loggedOutAccessTokens
-  function checkBlacklist (req: Request, res: Response, next: NextFunction): void {
-    const user = res.locals.user
-    const findUserInBlacklist = blacklistedAccessTokens.find(tokenObj => tokenObj.token_id === user.token_id)
-
-    if (typeof findUserInBlacklist !== 'undefined') {
-      res.sendStatus(401)
-    } else {
-      next()
-    }
-  }
-  return checkBlacklist
-}
-
-export { AuthController, getCheckBlacklistMiddleware }
+export default AuthController
