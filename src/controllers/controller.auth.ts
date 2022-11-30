@@ -10,11 +10,15 @@ import User from '../entities/entity.user'
 import AppError from '../exceptions/exception.apperror'
 import * as redis from 'redis'
 import IRedisPrefix from '../schema/redisprefix'
+import authenticateJWT from '../middleware/middleware.authenticatejwt'
 
 const userRepository = AppDataSource.getRepository(User)
 
 const SECRET = process.env.SECRET as jwt.Secret
 const REFRESH_SECRET = process.env.REFRESH_TOKEN_SECRET as jwt.Secret
+const ACCESS_TOKEN_EXPIRY_TIME = process.env.ACCESS_TOKEN_EXPIRY_TIME as string
+const RESET_TOKEN_EXPIRY_TIME = process.env.PASSWORD_RESET_TOKEN_EXPIRY_TIME as string
+const REFRESH_TOKEN_EXPIRY_TIME = process.env.REFRESH_TOKEN_EXPIRY_TIME as string
 
 // connecting to redis
 let redisClient: redis.RedisClientType
@@ -43,7 +47,7 @@ class AuthController implements Controller {
     this.router.post(`${this.path}/reset-password-request`, this.ResetPasswordRequest)
     this.router.post(`${this.path}/reset-password`, this.ResetPasswordHandlerPost)
     this.router.post(`${this.path}/refresh-token`, this.RefreshTokenHandler)
-    this.router.post(`${this.path}/logout`, this.LogoutHandler)
+    this.router.post(`${this.path}/logout`, authenticateJWT, this.LogoutHandler)
   }
 
   private async LoginHandler (req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -58,7 +62,7 @@ class AuthController implements Controller {
           if (passwordMatch) {
             const tokenId = makeid(128)
             const redisPrefix: IRedisPrefix = 'refreshToken-'
-            await redisClient.set(redisPrefix + tokenId, 'exists')
+            await redisClient.set(redisPrefix + tokenId, 'exists', { EX: parseInt(REFRESH_TOKEN_EXPIRY_TIME) })
             const accessToken = signAccessToken(user.email, user.role, tokenId)
             const refreshToken = signRefreshToken(user.email, user.role, tokenId)
             res.json({ accessToken, refreshToken })
@@ -118,15 +122,21 @@ class AuthController implements Controller {
         const tokenObj = await redisClient.get(redisPrefix + user.email)
 
         if (tokenObj != null) {
-          const userToChangePassword = await userRepository.findOneBy({ email: user.email })
-          if (userToChangePassword != null) {
-            const salt = await bcrypt.genSalt(10)
-            userToChangePassword.password_hash = await bcrypt.hash(newPassword, salt)
-            await userRepository.save(userToChangePassword)
-            await redisClient.del('resetToken-' + user.email)
-            res.status(200).json({ message: 'password changed successfully' })
+          const validTokenId = JSON.parse(tokenObj).token_id
+          if (validTokenId === user.token_id) {
+            const userToChangePassword = await userRepository.findOneBy({ email: user.email })
+          
+            if (userToChangePassword != null) {
+              const salt = await bcrypt.genSalt(10)
+              userToChangePassword.password_hash = await bcrypt.hash(newPassword, salt)
+              await userRepository.save(userToChangePassword)
+              await redisClient.del('resetToken-' + user.email)
+              res.status(200).json({ message: 'password changed successfully' })
+            } else {
+              res.status(404).json({ message: 'the user was not found' })
+            }
           } else {
-            res.status(404).json({ message: 'the user was not found' })
+            res.status(401).json({ message: 'the password reset token is invalid' })  
           }
         } else {
           res.status(401).json({ message: 'the password reset token is invalid' })
@@ -145,7 +155,8 @@ class AuthController implements Controller {
       if (email != null) {
         const user = await userRepository.findOneBy({ email })
         if (user != null) {
-          res.json({ passwordResetToken: this.getPasswordResetToken(email) })
+          const passwordResetToken = await this.getPasswordResetToken(email)
+          res.json({ passwordResetToken })
         } else {
           res.status(404).json({ message: 'this email does not exist. please check the email and try again' })
         }
@@ -166,10 +177,10 @@ class AuthController implements Controller {
     if (prevResetTokenObj != null) {
       const deserializedTokenObj = JSON.parse(prevResetTokenObj)
       deserializedTokenObj.token_id = tokenId
-      await redisClient.set(redisPrefix + email, JSON.stringify(deserializedTokenObj))
+      await redisClient.set(redisPrefix + email, JSON.stringify(deserializedTokenObj), { EX: parseInt(RESET_TOKEN_EXPIRY_TIME) })
     } else {
       const newPasswordRefreshTokenObj = { token_id: tokenId, email }
-      await redisClient.set(redisPrefix + email, JSON.stringify(newPasswordRefreshTokenObj))
+      await redisClient.set(redisPrefix + email, JSON.stringify(newPasswordRefreshTokenObj), { EX: parseInt(RESET_TOKEN_EXPIRY_TIME) })
     }
     return signPasswordResetToken(email, tokenId)
   }
@@ -183,7 +194,7 @@ class AuthController implements Controller {
         const u: any = decoded
         const refreshTokenId: string = u.token_id
         const redisPrefix: IRedisPrefix = 'refreshToken-'
-        const isRefreshTokenValid = redisClient.get(redisPrefix + refreshTokenId)
+        const isRefreshTokenValid = await redisClient.get(redisPrefix + refreshTokenId)
 
         if (isRefreshTokenValid != null) {
           const newTokenId = makeid(128)
@@ -192,7 +203,7 @@ class AuthController implements Controller {
 
           // we've used the refresh token to generate new access and refresh tokens to we should invalidate the previous one
           await redisClient.del(redisPrefix + refreshTokenId)
-          await redisClient.set(redisPrefix + newTokenId, 'exists')
+          await redisClient.set(redisPrefix + newTokenId, 'exists', { EX: parseInt(REFRESH_TOKEN_EXPIRY_TIME) })
           res.json({ accessToken, refreshToken })
         } else {
           next(new AppError(401, 'invalid refresh token'))
@@ -208,7 +219,7 @@ class AuthController implements Controller {
   private async LogoutHandler (req: Request, res: Response): Promise<void> {
     const tokenId: string = res.locals.user.token_id
     const redisPrefix: IRedisPrefix = 'loggedOutAccessToken-'
-    await redisClient.set(redisPrefix + tokenId, 'exists')
+    await redisClient.set(redisPrefix + tokenId, 'exists', { EX: parseInt(ACCESS_TOKEN_EXPIRY_TIME) })
 
     res.json({ message: 'logged out successfully' })
   }
