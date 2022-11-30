@@ -9,12 +9,6 @@ const DB_USERNAME = process.env.DB_USERNAME as string
 const DB_PASSWORD = process.env.DB_PASSWORD as string
 const DB_NAME = process.env.DB_NAME as string
 
-[DB_HOST, DB_PORT, DB_USERNAME, DB_PASSWORD, DB_NAME].forEach((envVar) => {
-  if (typeof envVar === 'undefined') {
-    throw new Error('not all environment variables are defined. check env file')
-  }
-})
-
 const AppDataSource = new DataSource({
   type: 'postgres',
   host: DB_HOST,

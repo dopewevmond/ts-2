@@ -16,12 +16,6 @@ const userRepository = AppDataSource.getRepository(User)
 const SECRET = process.env.SECRET as jwt.Secret
 const REFRESH_SECRET = process.env.REFRESH_TOKEN_SECRET as jwt.Secret
 
-[SECRET, REFRESH_SECRET].forEach((envVar) => {
-  if (typeof envVar === 'undefined') {
-    throw new Error('Not all environment variables are defined. Check .env.example file')
-  }
-})
-
 // connecting to redis
 let redisClient: redis.RedisClientType
 ;(async () => {
